@@ -7,12 +7,67 @@ import (
 	"time"
 )
 
+type NetworkStat struct {
+	BlockTime time.Time
+	Requests  []time.Time
+}
+
+type RateLimit map[string]NetworkStat
+
+func (rl RateLimit) addRequest(networkIP string, requestTime time.Time) {
+	current, ok := rl[networkIP]
+
+	if !ok {
+		rl[networkIP] = NetworkStat{
+			Requests: []time.Time{requestTime},
+		}
+		return
+	}
+
+	current.Requests = append(current.Requests, requestTime)
+	rl[networkIP] = current
+}
+
+func (rl RateLimit) checkRequest(networkIP string, requestTime time.Time, a *App) bool {
+	current, ok := rl[networkIP]
+
+	if !ok {
+		return true
+	}
+
+	// count requests for last time interval
+	checkTime := requestTime.Add(-a.GetLimitTime())
+	counter := 0
+	for i := len(current.Requests) - 1; i >= 0; i-- {
+		if current.Requests[i].Before(checkTime) {
+			break
+		}
+		counter++
+	}
+
+	if current.BlockTime.After(requestTime) {
+		return false
+	}
+
+	if counter < a.NumberOfRequests {
+		return true
+	}
+
+	if counter == a.NumberOfRequests {
+		current.BlockTime = requestTime.Add(a.GetWaitTime())
+		rl[networkIP] = current
+	}
+
+	return false
+}
+
 type App struct {
 	NetworkPrefix    int
 	NumberOfRequests int
 	UnitTime         time.Duration
 	LimitTime        int
 	WaitTime         int
+	RateLimitMap     RateLimit
 }
 
 func (a *App) Init() {
@@ -68,6 +123,8 @@ func (a *App) Init() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+
+	a.RateLimitMap = make(RateLimit)
 }
 
 func (a *App) GetLimitTime() time.Duration {
