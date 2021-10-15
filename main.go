@@ -17,7 +17,7 @@ type NetworkStat struct {
 
 type RateLimit map[string]NetworkStat
 
-func (rl RateLimit) addRequest(networkIP string, requestTime time.Time) {
+func (rl RateLimit) AddRequest(networkIP string, requestTime time.Time) {
 	current, ok := rl[networkIP]
 
 	if !ok {
@@ -31,7 +31,7 @@ func (rl RateLimit) addRequest(networkIP string, requestTime time.Time) {
 	rl[networkIP] = current
 }
 
-func (rl RateLimit) checkRequest(networkIP string, requestTime time.Time, a *App) bool {
+func (rl RateLimit) CheckRequest(networkIP string, requestTime time.Time, a *App) bool {
 	current, ok := rl[networkIP]
 
 	if !ok {
@@ -64,7 +64,7 @@ func (rl RateLimit) checkRequest(networkIP string, requestTime time.Time, a *App
 	return false
 }
 
-func (rl RateLimit) deleteNetworkStat(networkIP string) {
+func (rl RateLimit) DeleteNetworkStat(networkIP string) {
 	_, ok := rl[networkIP]
 
 	if !ok {
@@ -160,10 +160,10 @@ func (a *App) GetWaitTime() time.Duration {
 	return a.UnitTime * time.Duration(a.WaitTime)
 }
 
-func getNetworkIP(ip string, networkPrefix int) (string, error) {
+func GetNetworkIP(ip string, networkPrefix int) (string, error) {
 	_, netIP, err := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, networkPrefix))
 	if err != nil {
-		return "", nil
+		return "", err
 	}
 
 	result := fmt.Sprintf("%s/%d", netIP.IP.String(), networkPrefix)
@@ -190,7 +190,7 @@ func RootHandler(w http.ResponseWriter, r *http.Request, a *App) {
 	}
 	requestTime := time.Now()
 
-	netwprkCIDR, err := getNetworkIP(requestIP, a.NetworkPrefix)
+	netwprkCIDR, err := GetNetworkIP(requestIP, a.NetworkPrefix)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, "Internal Server Error\n")
@@ -198,7 +198,7 @@ func RootHandler(w http.ResponseWriter, r *http.Request, a *App) {
 	}
 
 	// check allow this request
-	allow := a.RateLimitMap.checkRequest(netwprkCIDR, requestTime, a)
+	allow := a.RateLimitMap.CheckRequest(netwprkCIDR, requestTime, a)
 
 	if !allow {
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -206,17 +206,15 @@ func RootHandler(w http.ResponseWriter, r *http.Request, a *App) {
 		return
 	}
 
-	a.RateLimitMap.addRequest(netwprkCIDR, requestTime)
+	a.RateLimitMap.AddRequest(netwprkCIDR, requestTime)
 	// check again if this request is equals a.NumberOfRequests then set BlockTime
-	a.RateLimitMap.checkRequest(netwprkCIDR, requestTime, a)
+	a.RateLimitMap.CheckRequest(netwprkCIDR, requestTime, a)
 
 	fmt.Fprintf(w, "OK!\n")
 }
 
 func ResetHandler(w http.ResponseWriter, r *http.Request, a *App) {
 	ip_param := r.URL.Query().Has("ip")
-
-	fmt.Printf("%+v\n", a)
 
 	if !ip_param {
 		w.WriteHeader(http.StatusBadRequest)
@@ -226,14 +224,14 @@ func ResetHandler(w http.ResponseWriter, r *http.Request, a *App) {
 
 	ip := r.URL.Query().Get("ip")
 
-	netwprkCIDR, err := getNetworkIP(ip, a.NetworkPrefix)
+	netwprkCIDR, err := GetNetworkIP(ip, a.NetworkPrefix)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, "Internal Server Error\n")
 		return
 	}
 
-	a.RateLimitMap.deleteNetworkStat(netwprkCIDR)
+	a.RateLimitMap.DeleteNetworkStat(netwprkCIDR)
 
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, "OK!\n")
