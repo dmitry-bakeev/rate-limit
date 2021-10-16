@@ -1,6 +1,8 @@
 package main_test
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 var (
 	now  = time.Now()
 	cidr = "192.168.1.15/24"
+	ip   = "192.168.1.15"
 )
 
 func TestInit(t *testing.T) {
@@ -29,7 +32,7 @@ func TestInit(t *testing.T) {
 
 	equal := reflect.DeepEqual(wantedA, testA)
 	if !equal {
-		t.Errorf("func get wrong data: got %v want %v", testA, wantedA)
+		t.Errorf("func gets wrong data: got %v want %v", testA, wantedA)
 	}
 }
 
@@ -41,7 +44,7 @@ func TestGetLimitTime(t *testing.T) {
 	got := testA.GetLimitTime()
 
 	if wanted != got {
-		t.Errorf("func return wrong value: got %v want %v", got, wanted)
+		t.Errorf("func returns wrong value: got %v want %v", got, wanted)
 	}
 }
 
@@ -53,7 +56,7 @@ func TestGetWaitTime(t *testing.T) {
 	got := testA.GetWaitTime()
 
 	if wanted != got {
-		t.Errorf("func return wrong value: got %v want %v", got, wanted)
+		t.Errorf("func returns wrong value: got %v want %v", got, wanted)
 	}
 }
 
@@ -67,7 +70,7 @@ func TestAddRequest(t *testing.T) {
 	testRL.AddRequest(cidr, now)
 	equal := reflect.DeepEqual(testRL, wantedRL)
 	if !equal {
-		t.Errorf("func add wrong data: got %v want %v", testRL, wantedRL)
+		t.Errorf("func adds wrong data: got %v want %v", testRL, wantedRL)
 	}
 }
 
@@ -80,7 +83,7 @@ func TestCheckRequest(t *testing.T) {
 	result := testA.RateLimitMap.CheckRequest(cidr, now, &testA)
 
 	if !result {
-		t.Errorf("func return wrong result: got %v want %v", result, true)
+		t.Errorf("func returns wrong result: got %v want %v", result, true)
 	}
 }
 
@@ -95,7 +98,7 @@ func TestCheckRequestDecline(t *testing.T) {
 	result := testA.RateLimitMap.CheckRequest(cidr, now, &testA)
 
 	if result {
-		t.Errorf("func return wrong result: got %v want %v", result, false)
+		t.Errorf("func returns wrong result: got %v want %v", result, false)
 	}
 }
 
@@ -115,21 +118,21 @@ func TestDeleteNetworkStat(t *testing.T) {
 }
 
 func TestGetNetworkIP(t *testing.T) {
-	networkIP, err := main.GetNetworkIP("192.168.1.15", 24)
+	networkIP, err := main.GetNetworkIP(ip, 24)
 
 	if err != nil {
-		t.Errorf("func return error: got %v want %v", err, nil)
+		t.Errorf("func returns error: got %v want %v", err, nil)
 	}
 
 	wanted := "192.168.1.0/24"
 
 	if networkIP != wanted {
-		t.Errorf("func return wrong value: got %v want %v", networkIP, wanted)
+		t.Errorf("func returns wrong value: got %v want %v", networkIP, wanted)
 	}
 }
 
 func TestGetNetworkIPError(t *testing.T) {
-	networkIP, err := main.GetNetworkIP("192.168.1.15", 33)
+	networkIP, err := main.GetNetworkIP(ip, 33)
 
 	if err == nil {
 		t.Errorf("func does not return error")
@@ -138,6 +141,166 @@ func TestGetNetworkIPError(t *testing.T) {
 	wanted := ""
 
 	if networkIP != wanted {
-		t.Errorf("func return wrong value: got %v want %v", networkIP, wanted)
+		t.Errorf("func returns wrong value: got %v want %v", networkIP, wanted)
+	}
+}
+
+func TestRootHandler(t *testing.T) {
+	testA := main.App{}
+	testA.Init()
+
+	req, err := http.NewRequest("GET", "/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(testA.WrapperHandler(main.RootHandler))
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("handler returns wrong status code: got %v want %v", rr.Code, http.StatusOK)
+	}
+
+	wanted := "OK!\n"
+
+	if rr.Body.String() != wanted {
+		t.Errorf("handler returns wrong data: got %v want %v", rr.Body.String(), wanted)
+	}
+}
+
+func TestRootHandlerInternalError(t *testing.T) {
+	testA := main.App{}
+	testA.Init()
+
+	req, err := http.NewRequest("GET", "/", nil)
+	req.Header.Add("X-Forwarded-For", "1.2.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(testA.WrapperHandler(main.RootHandler))
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("handler returns wrong status code: got %v want %v", rr.Code, http.StatusInternalServerError)
+	}
+
+	wanted := "Internal Server Error\n"
+
+	if rr.Body.String() != wanted {
+		t.Errorf("handler returns wrong data: got %v want %v", rr.Body.String(), wanted)
+	}
+}
+
+func TestRootHandlerManyRequests(t *testing.T) {
+	testA := main.App{}
+	testA.Init()
+
+	req, err := http.NewRequest("GET", "/", nil)
+	req.Header.Add("X-Forwarded-For", ip)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(testA.WrapperHandler(main.RootHandler))
+
+	for i := 0; i < testA.NumberOfRequests; i++ {
+		handler.ServeHTTP(rr, req)
+	}
+
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Errorf("handler returns wrong status code: got %v want %v", rr.Code, http.StatusTooManyRequests)
+	}
+
+	wanted := "Too Many Requests\n"
+
+	if rr.Body.String() != wanted {
+		t.Errorf("handler returns wrong data: got %v want %v", rr.Body.String(), wanted)
+	}
+}
+
+func TestResetHandler(t *testing.T) {
+	testA := main.App{}
+	testA.Init()
+
+	req, err := http.NewRequest("GET", "/reset", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	query := req.URL.Query()
+	query.Add("ip", ip)
+	req.URL.RawQuery = query.Encode()
+
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(testA.WrapperHandler(main.ResetHandler))
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("handler returns wrong status code: got %v want %v", rr.Code, http.StatusOK)
+	}
+
+	wanted := "OK!\n"
+
+	if rr.Body.String() != wanted {
+		t.Errorf("handler returns wrong data: got %v want %v", rr.Body.String(), wanted)
+	}
+}
+
+func TestResetHandlerBadRequest(t *testing.T) {
+	testA := main.App{}
+	testA.Init()
+
+	req, err := http.NewRequest("GET", "/reset", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(testA.WrapperHandler(main.ResetHandler))
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("handler returns wrong status code: got %v want %v", rr.Code, http.StatusBadRequest)
+	}
+
+	wanted := "Bad Request\n"
+
+	if rr.Body.String() != wanted {
+		t.Errorf("handler returns wrong data: got %v want %v", rr.Body.String(), wanted)
+	}
+}
+
+func TestResetHandlerInternalError(t *testing.T) {
+	testA := main.App{}
+	testA.Init()
+
+	req, err := http.NewRequest("GET", "/reset", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	query := req.URL.Query()
+	query.Add("ip", "1.2.3")
+	req.URL.RawQuery = query.Encode()
+
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(testA.WrapperHandler(main.ResetHandler))
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("handler returns wrong status code: got %v want %v", rr.Code, http.StatusInternalServerError)
+	}
+
+	wanted := "Internal Server Error\n"
+
+	if rr.Body.String() != wanted {
+		t.Errorf("handler returns wrong data: got %v want %v", rr.Body.String(), wanted)
 	}
 }
