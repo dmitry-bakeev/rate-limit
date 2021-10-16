@@ -1,0 +1,12 @@
+version: "3.9"
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - NUMBER_OF_REQUESTS=10
+    ports:
+      - "8000:8000"

@@ -182,6 +182,7 @@ func RootHandler(w http.ResponseWriter, r *http.Request, a *App) {
 		fmt.Fprintf(w, "Status Not Found\n")
 		return
 	}
+
 	requestIP := r.Header.Get("X-Forwarded-For")
 	if requestIP == "" {
 		w.WriteHeader(http.StatusOK)
